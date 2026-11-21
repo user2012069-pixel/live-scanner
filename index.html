@@ -180,6 +180,26 @@
     return devices;
   }
 
+  let switching = false;
+  const CAM_KEY = KEY + "-camera";
+  function savedCamera() { try { return localStorage.getItem(CAM_KEY) || ""; } catch { return ""; } }
+  function scoreCamera(label) {
+    const l = (label || "").toLowerCase();
+    if (/\bir\b|infrared/.test(l)) return -3;
+    if (/front|user facing|facing front|selfie/.test(l)) return -2;
+    if (/integrated|built-in|built in|true vision|facetime|internal/.test(l)) return -1;
+    if (/ultra wide|telephoto|tele/.test(l)) return 0;
+    if (/back|rear|environment/.test(l)) return 1;
+    return 2; // anything else is most likely a camera you plugged in
+  }
+  function pickBest(devs) {
+    const saved = devs.find((d) => d.deviceId && d.deviceId === savedCamera());
+    if (saved) return saved;
+    let best = null, top = -Infinity;
+    for (const d of devs) { const sc = scoreCamera(d.label); if (sc >= top) { top = sc; best = d; } }
+    return best;
+  }
+
   async function openCamera(deviceId) {
     if (stream) stream.getTracks().forEach((t) => t.stop());
     const base = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } };
@@ -199,6 +219,15 @@
     try { const caps = track.getCapabilities ? track.getCapabilities() : {}; if (caps.focusMode && caps.focusMode.includes("continuous")) await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
     const devs = await listCameras();
     const s = track.getSettings();
+    // The browser hands over its default camera (often the laptop's own).
+    // Switch to the best one: your saved pick, else a plugged-in camera.
+    if ((!deviceId || s.deviceId !== deviceId) && !switching) {
+      const best = pickBest(devs);
+      if (best && best.deviceId && best.deviceId !== s.deviceId) {
+        switching = true;
+        try { return await openCamera(best.deviceId); } catch {} finally { switching = false; }
+      }
+    }
     if (s.deviceId) $("cameraSelect").value = s.deviceId;
     $("badgeText").textContent = track.label || "Camera on";
     return devs;
@@ -223,7 +252,7 @@
     const added = devs.find((d) => d.deviceId && !before.has(d.deviceId));
     if (added) { try { await openCamera(added.deviceId); setStatus("Switched to the camera you just connected."); } catch {} }
   });
-  $("cameraSelect").onchange = async (e) => { if (running) { try { await openCamera(e.target.value); } catch (err) { setStatus("Couldn't open that camera.", true); } } };
+  $("cameraSelect").onchange = async (e) => { try { localStorage.setItem(CAM_KEY, e.target.value); } catch {} if (running) { try { await openCamera(e.target.value); } catch (err) { setStatus("Couldn't open that camera.", true); } } };
 
   // ---------- reading
   async function ensureWorker() {
