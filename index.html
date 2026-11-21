@@ -182,8 +182,15 @@
 
   async function openCamera(deviceId) {
     if (stream) stream.getTracks().forEach((t) => t.stop());
-    const video_c = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } };
-    stream = await navigator.mediaDevices.getUserMedia({ video: { ...video_c, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    const base = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } };
+    const tries = [{ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } }, base, true];
+    let lastErr = null;
+    stream = null;
+    for (const v of tries) {
+      try { stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false }); break; }
+      catch (e) { lastErr = e; if (e && e.name === "NotAllowedError") break; }
+    }
+    if (!stream) throw lastErr;
     video.srcObject = stream;
     await video.play().catch(() => {});
     const track = stream.getVideoTracks()[0];
@@ -268,16 +275,26 @@
     try { if ("wakeLock" in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { wakeLock = null; }); } } catch {}
   }
 
+  function cameraError(e) {
+    const name = e && e.name;
+    if (name === "NotAllowedError" || name === "SecurityError")
+      return "The camera was refused. If this link opened inside another app (Claude, Gmail, Instagram...), open it in Safari or Chrome instead. Otherwise tap the icon next to the web address, set Camera to Allow, and reload.";
+    if (name === "NotFoundError" || name === "OverconstrainedError") return "No camera found. Connect a camera or pick another one, then try again.";
+    if (name === "NotReadableError" || name === "AbortError") return "The camera is busy. Close other apps or tabs using it, then try again.";
+    return "Couldn't start the camera (" + (name || "unknown error") + "). Reload the page and try again.";
+  }
+
   async function start() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return setStatus("This browser can't use the camera here. Open the page over https in Safari or Chrome.", true);
     }
     $("toggle").disabled = true;
     try { await openCamera($("cameraSelect").value || undefined); }
-    catch (e) { $("toggle").disabled = false; return setStatus("Camera blocked: allow camera access for this site in your browser settings, then try again.", true); }
+    catch (e) { $("toggle").disabled = false; return setStatus(cameraError(e), true); }
     try { await ensureWorker(); }
     catch (e) { $("toggle").disabled = false; return setStatus("Couldn't load the text reader. Check your internet connection and try again.", true); }
     running = true;
+    try { localStorage.setItem(KEY + "-running", "1"); } catch {}
     $("toggle").disabled = false;
     $("toggle").textContent = "Stop scanning";
     $("dot").classList.add("on");
@@ -288,6 +305,7 @@
 
   function stop() {
     running = false;
+    try { localStorage.removeItem(KEY + "-running"); } catch {}
     clearTimeout(loopTimer);
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null; video.srcObject = null;
@@ -309,6 +327,10 @@
   });
 
   render();
+  // If you were scanning when the page closed, pick up again automatically.
+  let wasRunning = false;
+  try { wasRunning = localStorage.getItem(KEY + "-running") === "1"; } catch {}
+  if (wasRunning) { setStatus("Resuming scanning…"); start(); }
 })();
 </script>
 </body>
