@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141519">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Live Text Scanner</title>
+<style>
+  :root {
+    --bg: #141519; --surface: #1d1f25; --fg: #ececea; --muted: #9a9ea8; --line: #2c2f37;
+    --accent: #ffd23f; --accent-ink: #1d1f24; --good: #6fdc8c; --bad: #ff8a80;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 var(--sans); }
+  body { padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) 40px max(16px, env(safe-area-inset-left, 0px)); }
+  .wrap { max-width: 640px; margin: 0 auto; display: grid; gap: 14px; padding-top: 12px; }
+  h1 { margin: 0; font-size: 1.35rem; }
+  h1 span { background: linear-gradient(transparent 55%, var(--accent) 55%); color: var(--fg); }
+  .cam { position: relative; border-radius: 16px; overflow: hidden; background: #000; aspect-ratio: 3 / 4; max-height: 60vh; width: 100%; }
+  @media (min-aspect-ratio: 1/1) { .cam { aspect-ratio: 16 / 9; } }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .badge {
+    position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 8px;
+    background: rgba(0,0,0,.6); color: #fff; font-size: .85rem; padding: 6px 10px; border-radius: 999px;
+    max-width: calc(100% - 20px);
+  }
+  #badgeText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--good); }
+  @media (prefers-reduced-motion: no-preference) { .dot.on { animation: blink 1.4s ease-in-out infinite; } @keyframes blink { 50% { opacity: .35; } } }
+  .live {
+    position: absolute; left: 0; right: 0; bottom: 0; max-height: 40%; overflow: auto;
+    background: linear-gradient(transparent, rgba(0,0,0,.85) 30%); color: #fff;
+    font: .85rem/1.4 var(--mono); padding: 28px 12px 10px; white-space: pre-wrap; word-break: break-word;
+  }
+  .live:empty { display: none; }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .btn {
+    appearance: none; border: 0; border-radius: 12px; padding: 14px; min-height: 50px; cursor: pointer;
+    font: 600 1rem var(--sans); background: var(--surface); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); box-shadow: none; grid-column: 1 / -1; font-size: 1.1rem; min-height: 60px; }
+  .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  select { width: 100%; padding: 12px; border-radius: 12px; background: var(--surface); color: var(--fg); border: 1px solid var(--line); font: 1rem var(--sans); grid-column: 1 / -1; }
+  #status { margin: 0; color: var(--muted); font-size: .9rem; min-height: 1.3em; }
+  #status.err { color: var(--bad); }
+  .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .count { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
+  .log { display: grid; gap: 8px; }
+  .item { background: var(--surface); border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line); padding: 10px 12px; display: grid; gap: 6px; min-width: 0; }
+  .meta { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+  .link { appearance: none; border: 0; background: none; color: var(--fg); font: 500 .85rem var(--sans); padding: 4px 8px; border-radius: 8px; cursor: pointer; }
+  .link.bad { color: var(--bad); }
+  pre { margin: 0; font: .9rem/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  .empty { border: 1.5px dashed var(--line); border-radius: 12px; padding: 16px; color: var(--muted); font-size: .92rem; }
+  .settings { color: var(--muted); font-size: .85rem; display: grid; gap: 6px; }
+  .settings label { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  .settings input[type=range] { flex: 1; max-width: 200px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span>Live</span> Text Scanner</h1>
+
+  <div class="cam">
+    <video id="video" playsinline muted autoplay></video>
+    <div class="badge"><span class="dot" id="dot"></span><span id="badgeText">Camera off</span></div>
+    <div class="live" id="live"></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="toggle" type="button">Start scanning</button>
+    <select id="cameraSelect" aria-label="Camera" hidden></select>
+    <button class="btn" id="copyAll" type="button">Copy all</button>
+    <button class="btn" id="saveTxt" type="button">Save .txt</button>
+  </div>
+  <p id="status" role="status" aria-live="polite">Tap Start scanning. It keeps reading until you stop it, and writes down any new text it sees.</p>
+
+  <details class="settings">
+    <summary>Settings</summary>
+    <label>Read every <output id="intervalOut">1.5</output> s <input id="interval" type="range" min="0.5" max="5" step="0.5" value="1.5"></label>
+    <label>Minimum confidence <output id="confOut">65</output>% <input id="conf" type="range" min="30" max="95" step="5" value="65"></label>
+    <button class="btn" id="clearAll" type="button">Delete everything saved</button>
+  </details>
+
+  <div class="head"><strong>Text found</strong><span class="count" id="count"></span></div>
+  <div class="log" id="log"><div class="empty" id="empty">Nothing yet. Point the camera at text and hold it steady for a second.</div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const video = $("video"), statusEl = $("status"), liveEl = $("live"), logEl = $("log");
+  const KEY = "live-text-scanner-v1";
+  let entries = load();            // newest first: {text, at}
+  let stream = null, worker = null, running = false, loopTimer = null, wakeLock = null;
+  let lastRead = "", recent = entries.slice(0, 40).map((e) => norm(e.text));
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+  function setStatus(t, err) { statusEl.textContent = t; statusEl.classList.toggle("err", !!err); }
+  function load() { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; } }
+  function persist() { try { localStorage.setItem(KEY, JSON.stringify(entries.slice(0, 2000))); } catch {} }
+  function norm(t) { return t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+
+  // Similarity of two strings (0..1), using pairs of letters.
+  function similar(a, b) {
+    if (a === b) return 1;
+    if (a.length < 2 || b.length < 2) return 0;
+    const pairs = new Map();
+    for (let i = 0; i < a.length - 1; i++) { const p = a.substr(i, 2); pairs.set(p, (pairs.get(p) || 0) + 1); }
+    let hit = 0;
+    for (let i = 0; i < b.length - 1; i++) { const p = b.substr(i, 2); const n = pairs.get(p); if (n) { hit++; pairs.set(p, n - 1); } }
+    return (2 * hit) / (a.length + b.length - 2);
+  }
+
+  // ---------- list
+  const fmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+  function render() {
+    $("count").textContent = entries.length ? entries.length + " saved" : "";
+    logEl.querySelectorAll(".item").forEach((n) => n.remove());
+    $("empty").hidden = entries.length > 0;
+    const frag = document.createDocumentFragment();
+    entries.slice(0, 300).forEach((e, i) => {
+      const item = document.createElement("div"); item.className = "item";
+      const meta = document.createElement("div"); meta.className = "meta";
+      const when = document.createElement("span"); when.textContent = fmt.format(new Date(e.at));
+      const acts = document.createElement("span");
+      const pre = document.createElement("pre"); pre.textContent = e.text;
+      const copy = document.createElement("button"); copy.className = "link"; copy.textContent = "Copy";
+      copy.onclick = () => copyText(e.text);
+      const del = document.createElement("button"); del.className = "link bad"; del.textContent = "Delete";
+      del.onclick = () => { entries.splice(entries.indexOf(e), 1); persist(); render(); };
+      acts.append(copy, del); meta.append(when, acts); item.append(meta, pre); frag.append(item);
+    });
+    logEl.append(frag);
+  }
+
+  function allText() {
+    return entries.slice().reverse().map((e) => "[" + fmt.format(new Date(e.at)) + "]\n" + e.text).join("\n\n");
+  }
+  async function copyText(t) {
+    try { await navigator.clipboard.writeText(t); setStatus("Copied."); }
+    catch { setStatus("Couldn't copy. Use Save .txt instead.", true); }
+  }
+  $("copyAll").onclick = () => entries.length ? copyText(allText()) : setStatus("Nothing saved yet.");
+  $("saveTxt").onclick = () => {
+    if (!entries.length) return setStatus("Nothing saved yet.");
+    const blob = new Blob([allText()], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "scanned-text-" + new Date().toISOString().slice(0, 10) + ".txt";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  let clearArmed = false;
+  $("clearAll").onclick = () => {
+    if (!clearArmed) { clearArmed = true; $("clearAll").textContent = "Tap again to delete everything"; setTimeout(() => { clearArmed = false; $("clearAll").textContent = "Delete everything saved"; }, 4000); return; }
+    entries = []; recent = []; persist(); render(); clearArmed = false; $("clearAll").textContent = "Delete everything saved"; setStatus("Deleted.");
+  };
+
+  // ---------- settings
+  const intervalIn = $("interval"), confIn = $("conf");
+  intervalIn.oninput = () => $("intervalOut").textContent = intervalIn.value;
+  confIn.oninput = () => $("confOut").textContent = confIn.value;
+
+  // ---------- camera
+  async function listCameras() {
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+    const sel = $("cameraSelect");
+    const current = sel.value;
+    sel.replaceChildren(...devices.map((d, i) => { const o = document.createElement("option"); o.value = d.deviceId; o.textContent = d.label || "Camera " + (i + 1); return o; }));
+    if (current && devices.some((d) => d.deviceId === current)) sel.value = current;
+    sel.hidden = devices.length < 2;
+    return devices;
+  }
+
+  async function openCamera(deviceId) {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    const video_c = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } };
+    stream = await navigator.mediaDevices.getUserMedia({ video: { ...video_c, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    const track = stream.getVideoTracks()[0];
+    track.onended = () => { if (running) reconnect(); };
+    // Ask for continuous autofocus where supported.
+    try { const caps = track.getCapabilities ? track.getCapabilities() : {}; if (caps.focusMode && caps.focusMode.includes("continuous")) await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
+    const devs = await listCameras();
+    const s = track.getSettings();
+    if (s.deviceId) $("cameraSelect").value = s.deviceId;
+    $("badgeText").textContent = track.label || "Camera on";
+    return devs;
+  }
+
+  async function reconnect() {
+    $("dot").classList.remove("on");
+    $("badgeText").textContent = "Waiting for camera…";
+    setStatus("Camera disconnected. Waiting for it to come back…");
+    for (;;) {
+      if (!running) return;
+      try { await openCamera(); $("dot").classList.add("on"); setStatus("Scanning."); return; }
+      catch { await new Promise((r) => setTimeout(r, 2000)); }
+    }
+  }
+
+  // A newly plugged-in camera is picked up automatically.
+  navigator.mediaDevices && navigator.mediaDevices.addEventListener && navigator.mediaDevices.addEventListener("devicechange", async () => {
+    if (!running) return;
+    const before = new Set(Array.from($("cameraSelect").options).map((o) => o.value));
+    const devs = await listCameras();
+    const added = devs.find((d) => d.deviceId && !before.has(d.deviceId));
+    if (added) { try { await openCamera(added.deviceId); setStatus("Switched to the camera you just connected."); } catch {} }
+  });
+  $("cameraSelect").onchange = async (e) => { if (running) { try { await openCamera(e.target.value); } catch (err) { setStatus("Couldn't open that camera.", true); } } };
+
+  // ---------- reading
+  async function ensureWorker() {
+    if (worker) return worker;
+    setStatus("Loading the text reader (first time only, about 10 seconds)…");
+    worker = await Tesseract.createWorker("eng");
+    return worker;
+  }
+
+  async function readOnce() {
+    if (!running || !video.videoWidth) return;
+    const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    ctx.filter = "grayscale(1) contrast(1.3)";
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const { data } = await worker.recognize(canvas);
+    const minConf = Number(confIn.value);
+    const lines = (data.lines || [])
+      .filter((l) => l.confidence >= minConf)
+      .map((l) => l.text.trim())
+      .filter((t) => (t.match(/[A-Za-z0-9]/g) || []).length >= 2);
+    const text = lines.join("\n");
+    liveEl.textContent = text;
+    if (!text) { lastRead = ""; return; }
+    const n = norm(text);
+    // Only keep text seen in two reads in a row (skips blurry junk)...
+    const stable = lastRead && similar(n, lastRead) >= 0.8;
+    lastRead = n;
+    if (!stable || n.replace(/ /g, "").length < 3) return;
+    // ...and that isn't something already saved.
+    if (recent.some((r) => similar(n, r) >= 0.8)) return;
+    recent.unshift(n); recent = recent.slice(0, 40);
+    entries.unshift({ text, at: Date.now() });
+    persist(); render();
+    if (navigator.vibrate) navigator.vibrate(30);
+    setStatus("Saved new text.");
+  }
+
+  async function loop() {
+    if (!running) return;
+    const started = performance.now();
+    try { await readOnce(); } catch (e) { console.warn(e); }
+    const wait = Math.max(0, Number(intervalIn.value) * 1000 - (performance.now() - started));
+    loopTimer = setTimeout(loop, wait);
+  }
+
+  async function keepAwake() {
+    try { if ("wakeLock" in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { wakeLock = null; }); } } catch {}
+  }
+
+  async function start() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return setStatus("This browser can't use the camera here. Open the page over https in Safari or Chrome.", true);
+    }
+    $("toggle").disabled = true;
+    try { await openCamera($("cameraSelect").value || undefined); }
+    catch (e) { $("toggle").disabled = false; return setStatus("Camera blocked: allow camera access for this site in your browser settings, then try again.", true); }
+    try { await ensureWorker(); }
+    catch (e) { $("toggle").disabled = false; return setStatus("Couldn't load the text reader. Check your internet connection and try again.", true); }
+    running = true;
+    $("toggle").disabled = false;
+    $("toggle").textContent = "Stop scanning";
+    $("dot").classList.add("on");
+    setStatus("Scanning. Keep this page open; it saves new text as it sees it.");
+    keepAwake();
+    loop();
+  }
+
+  function stop() {
+    running = false;
+    clearTimeout(loopTimer);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null; video.srcObject = null;
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    $("toggle").textContent = "Start scanning";
+    $("dot").classList.remove("on");
+    $("badgeText").textContent = "Camera off";
+    liveEl.textContent = "";
+    setStatus("Stopped. Everything found is saved below.");
+  }
+
+  $("toggle").onclick = () => running ? stop() : start();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && running) {
+      keepAwake();
+      const t = stream && stream.getVideoTracks()[0];
+      if (!t || t.readyState === "ended") reconnect();
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
